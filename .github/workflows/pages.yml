@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_TAG: db
+  KEEP_RELEASES: 30
 
 jobs:
   build:
@@ -36,20 +36,32 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
       - name: Download previous database
         if: ${{ !inputs.full }}
-        run: gh release download "$RELEASE_TAG" --pattern stars.sqlite --output previous.sqlite || echo "no previous database"
+        run: |
+          tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName // empty')
+          if [ -n "$tag" ]; then
+            gh release download "$tag" --pattern stars.sqlite --output previous.sqlite
+          else
+            echo "no previous database"
+          fi
       - name: Fetch stars
         run: |
           previous=()
           if [ -f previous.sqlite ]; then previous=(--previous previous.sqlite); fi
-          nix run .#fetch -- stars.sqlite --user "$GITHUB_REPOSITORY_OWNER" "${previous[@]}"
+          nix run .#fetch -- stars.sqlite --user "$GITHUB_REPOSITORY_OWNER" --release-notes notes.md "${previous[@]}"
       - name: Publish database release
         run: |
-          gh release view "$RELEASE_TAG" >/dev/null 2>&1 ||
-            gh release create "$RELEASE_TAG" --title "Stars database" --latest=false \
-              --notes "SQLite database of the starred repositories, refreshed daily by the Pages workflow."
-          gh release upload "$RELEASE_TAG" stars.sqlite --clobber
+          tail -n +2 notes.md > body.md
+          gh release create "db-$(date -u +%Y%m%d-%H%M%S)" stars.sqlite \
+            --title "$(head -n 1 notes.md)" --notes-file body.md --latest
+          gh release list --limit 200 --json tagName --jq '.[].tagName' | grep '^db-' |
+            tail -n +$((KEEP_RELEASES + 1)) | xargs -r -n 1 gh release delete --yes --cleanup-tag
       - name: Assemble site
-        run: nix run .#assemble -- stars.sqlite _site
+        run: |
+          nix run .#assemble -- stars.sqlite _site
+          # TEMPORARY: probe which extensions GitHub Pages serves without on-the-fly compression.
+          for ext in png gif jpg webp zip gz br woff2 mp4 pdf bin db sqlite3; do
+            head -c 65536 stars.sqlite > "_site/probe.$ext"
+          done
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

@@ -104,3 +104,4 @@ dialog header p { margin: .2rem 0 0; font-size: .85rem; overflow-wrap: anywhere;
 @media (max-width: 700px) {
   body > header { position: static; }
 }
+#lang { max-width: 14rem; }

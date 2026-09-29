@@ -267,8 +267,8 @@ def load_previous(path: str) -> dict[int, dict]:
     """Languages and README per repo id from a database written by a previous run."""
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     previous = {
-        rid: {"pushed_at": pushed_at, "languages": [], "readme": None}
-        for rid, pushed_at in db.execute("SELECT id, pushed_at FROM repos")
+        rid: {"full_name": full_name, "url": url, "pushed_at": pushed_at, "languages": [], "readme": None}
+        for rid, full_name, url, pushed_at in db.execute("SELECT id, full_name, url, pushed_at FROM repos")
     }
     for rid, name, size, color in db.execute(
         "SELECT rl.repo_id, rl.language, rl.bytes, l.color FROM repo_languages rl"
@@ -336,6 +336,7 @@ def main() -> None:
         "--previous",
         help="previous database: reuse languages and README of repos not pushed to since",
     )
+    parser.add_argument("--release-notes", help="write a markdown changelog vs --previous to this file")
     args = parser.parse_args()
 
     login = args.user
@@ -386,6 +387,32 @@ def main() -> None:
     os.replace(tmp, args.output)
     n_readmes = sum(1 for r in repos if r.get("readme"))
     log(f"wrote {args.output}: {len(repos)} repos, {n_readmes} READMEs, {os.path.getsize(args.output) / 1e6:.1f} MB")
+
+    if args.release_notes:
+        write_release_notes(args.release_notes, repos, previous if args.previous else None, len(stale))
+
+
+def write_release_notes(path: str, repos: list[dict], previous: dict[int, dict] | None, refreshed: int) -> None:
+    """Markdown summary of what changed since the previous database; first line is the release title."""
+    date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    lines = []
+    if previous is None:
+        title = f"{date} · {len(repos)} stars"
+        lines.append("Full fetch, no previous database.")
+    else:
+        current = {r["id"] for r in repos}
+        added = [r for r in repos if r["id"] not in previous]
+        removed = [p for rid, p in previous.items() if rid not in current]
+        title = f"{date} · {len(repos)} stars (+{len(added)} / −{len(removed)})"
+        lines.append(f"README and languages refreshed for {refreshed} new or updated repositories.")
+        for heading, items in (("Starred", added), ("Unstarred", removed)):
+            if items:
+                lines += ["", f"## {heading} ({len(items)})", ""]
+                for r in items:
+                    desc = f" — {' '.join(r['description'].split())}" if r.get("description") else ""
+                    lines.append(f"- [{r['full_name']}]({r['url']}){desc}")
+    with open(path, "w") as f:
+        f.write(title + "\n" + "\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":
