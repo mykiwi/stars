@@ -50,7 +50,7 @@ input, select, button { font: inherit; color: inherit; }
   padding: .2rem .4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
 }
 .row button { cursor: pointer; }
-#topic { width: 10rem; }
+#topic { width: 8rem; }
 
 main { max-width: 1100px; margin: 0 auto; padding: 1rem 0; }
 @media (max-width: 1140px) { main { padding: 1rem; } }
@@ -104,4 +104,4 @@ dialog header p { margin: .2rem 0 0; font-size: .85rem; overflow-wrap: anywhere;
 @media (max-width: 700px) {
   body > header { position: static; }
 }
-#lang { max-width: 14rem; }
+#lang { max-width: 10rem; }

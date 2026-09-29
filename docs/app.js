@@ -25,6 +25,7 @@ let state = { ...DEFAULTS };
 let page = 0;
 let total = 0;
 let generation = 0;
+let repoCount = 0;
 
 async function query(sql, params = []) {
   return db.query(sql, params);
@@ -107,9 +108,13 @@ async function runSearch(reset) {
   try {
     if (reset) {
       $("count").textContent = "Recherche…";
-      const [{ n }] = await query(`SELECT COUNT(*) AS n ${from} ${where}`, params);
-      if (gen !== generation) return;
-      total = n;
+      if (where) {
+        const [{ n }] = await query(`SELECT COUNT(*) AS n ${from} ${where}`, params);
+        if (gen !== generation) return;
+        total = n;
+      } else {
+        total = repoCount;
+      }
     }
     const rows = await query(
       `SELECT r.* ${from} ${where} ORDER BY ${sort}, r.id LIMIT ${PAGE_SIZE} OFFSET ${page * PAGE_SIZE}`,
@@ -122,7 +127,9 @@ async function runSearch(reset) {
     $("count").textContent = `${total.toLocaleString("fr")} repo${total > 1 ? "s" : ""}`;
     $("more").hidden = page * PAGE_SIZE >= total;
     $("error").hidden = true;
-    if (fts && rows.length) loadSnippets(gen, fts, rows.map((r) => r.id));
+    // Snippets read whole READMEs over HTTP: only for the top results, skipping huge ones.
+    const snippetIds = rows.filter((r) => r.readme_size && r.readme_size < 65536).slice(0, 10).map((r) => r.id);
+    if (fts && reset && snippetIds.length) loadSnippets(gen, fts, snippetIds);
   } catch (e) {
     showError(e);
   }
@@ -145,6 +152,7 @@ async function loadSnippets(gen, fts, ids) {
 // Snippets come from raw README source: drop HTML tags and markdown punctuation.
 function cleanSnippet(text) {
   return text
+    .replace(/<!--|-->/g, " ")
     .replace(/<\/?[a-z][^<>]*>?/gi, " ")
     .replace(/!?\[([^\]]*)\]\([^)\s]*\)?/g, "$1")
     .replace(/[*`#>|~]+|={3,}|-{3,}/g, " ")
@@ -288,10 +296,9 @@ async function openDetail(r) {
 }
 
 async function loadLanguages() {
-  const sql = state.anyLang
-    ? "SELECT language AS name, COUNT(*) AS n FROM repo_languages GROUP BY language ORDER BY n DESC, name"
-    : "SELECT language AS name, COUNT(*) AS n FROM repos WHERE language IS NOT NULL GROUP BY language ORDER BY n DESC, name";
-  const rows = await query(sql);
+  const rows = await query("SELECT name, count AS n FROM facets WHERE kind = ? ORDER BY count DESC, name", [
+    state.anyLang ? "any_language" : "language",
+  ]);
   $("lang").replaceChildren(
     el("option", { value: "", textContent: "Tous" }),
     ...rows.map((l) => el("option", { value: l.name, textContent: `${l.name} (${l.n})` })),
@@ -302,9 +309,13 @@ async function loadLanguages() {
   $("lang").value = state.lang;
 }
 
+let topicsLoaded = false;
+
 async function loadTopics() {
-  const rows = await query("SELECT topic, COUNT(*) AS n FROM repo_topics GROUP BY topic ORDER BY n DESC LIMIT 1000");
-  $("topics").replaceChildren(...rows.map((t) => el("option", { value: t.topic, label: `${t.topic} (${t.n})` })));
+  if (topicsLoaded) return;
+  topicsLoaded = true;
+  const rows = await query("SELECT name, count AS n FROM facets WHERE kind = 'topic' ORDER BY count DESC LIMIT 1000");
+  $("topics").replaceChildren(...rows.map((t) => el("option", { value: t.name, label: `${t.name} (${t.n})` })));
 }
 
 async function setFilter(patch) {
@@ -346,7 +357,7 @@ async function main() {
   // Resolved here: the worker would resolve a relative URL against vendor/.
   const dbUrl = new URL(cfg.url, location.href).href;
   const worker = await createDbWorker(
-    [{ from: "inline", config: { serverMode: "full", url: dbUrl, requestChunkSize: 4096 } }],
+    [{ from: "inline", config: { serverMode: "full", url: dbUrl, requestChunkSize: 16384 } }],
     new URL("vendor/sqlite.worker.js", location.href).href,
     new URL("vendor/sql-wasm.wasm", location.href).href,
   );
@@ -358,12 +369,12 @@ async function main() {
 
   const meta = Object.fromEntries((await query("SELECT key, value FROM meta")).map((m) => [m.key, m.value]));
   colors = new Map((await query("SELECT name, color FROM languages")).map((l) => [l.name, l.color]));
+  repoCount = Number(meta.count);
   $("stats").textContent = `${Number(meta.count).toLocaleString("fr")} stars de @${meta.login} · màj ${fmtDate(meta.fetched_at)}`;
   document.title = `Stars de @${meta.login}`;
 
   await loadLanguages();
   search(true);
-  loadTopics();
 
   let timer;
   $("q").addEventListener("input", () => {
@@ -376,6 +387,7 @@ async function main() {
     onChange();
   });
   $("topic").addEventListener("change", onChange);
+  $("topic").addEventListener("focus", loadTopics);
   for (const id of ["lang", "sort", "hideArchived", "hideForks"]) $(id).addEventListener("change", onChange);
   $("reset").onclick = () => setFilter({ ...DEFAULTS });
   $("more").onclick = () => search(false);

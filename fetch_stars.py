@@ -37,8 +37,10 @@ query($ids: [ID!]!) {
 
 SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID;
+-- id is the rank by star date (1 = most recent) so the default listing reads contiguous pages.
 CREATE TABLE repos (
   id INTEGER PRIMARY KEY,
+  github_id INTEGER NOT NULL UNIQUE,
   full_name TEXT NOT NULL UNIQUE,
   owner TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -55,7 +57,8 @@ CREATE TABLE repos (
   fork INTEGER NOT NULL,
   created_at TEXT,
   pushed_at TEXT,
-  starred_at TEXT NOT NULL
+  starred_at TEXT NOT NULL,
+  readme_size INTEGER NOT NULL
 );
 CREATE INDEX repos_starred_at ON repos (starred_at);
 CREATE INDEX repos_stars ON repos (stars);
@@ -78,6 +81,13 @@ CREATE TABLE readmes (
   path TEXT NOT NULL,
   content TEXT NOT NULL
 );
+-- Precomputed filter counts, so the app does not scan whole tables on load.
+CREATE TABLE facets (
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  count INTEGER NOT NULL,
+  PRIMARY KEY (kind, count, name)
+) WITHOUT ROWID;
 CREATE VIEW search_source AS
   SELECT r.id, r.full_name, r.description, r.topics, m.content AS readme
   FROM repos r LEFT JOIN readmes m ON m.repo_id = r.id;
@@ -266,48 +276,64 @@ def readme_from_rest(full_name: str) -> tuple[str, str] | None:
 def load_previous(path: str) -> dict[int, dict]:
     """Languages and README per repo id from a database written by a previous run."""
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    previous = {
-        rid: {"full_name": full_name, "url": url, "pushed_at": pushed_at, "languages": [], "readme": None}
-        for rid, full_name, url, pushed_at in db.execute("SELECT id, full_name, url, pushed_at FROM repos")
-    }
-    for rid, name, size, color in db.execute(
+    columns = {row[1] for row in db.execute("PRAGMA table_info(repos)")}
+    gid = "github_id" if "github_id" in columns else "id"  # databases from before github_id existed
+    by_row: dict[int, dict] = {}
+    for row_id, github_id, full_name, url, pushed_at in db.execute(
+        f"SELECT id, {gid}, full_name, url, pushed_at FROM repos"
+    ):
+        by_row[row_id] = {
+            "github_id": github_id, "full_name": full_name, "url": url, "pushed_at": pushed_at,
+            "languages": [], "readme": None,
+        }
+    for row_id, name, size, color in db.execute(
         "SELECT rl.repo_id, rl.language, rl.bytes, l.color FROM repo_languages rl"
         " LEFT JOIN languages l ON l.name = rl.language ORDER BY rl.repo_id, rl.bytes DESC"
     ):
-        previous[rid]["languages"].append((name, size, color))
-    for rid, path_, content in db.execute("SELECT repo_id, path, content FROM readmes"):
-        previous[rid]["readme"] = (path_, content)
+        by_row[row_id]["languages"].append((name, size, color))
+    for row_id, path_, content in db.execute("SELECT repo_id, path, content FROM readmes"):
+        by_row[row_id]["readme"] = (path_, content)
     db.close()
-    return previous
+    return {p["github_id"]: p for p in by_row.values()}
 
 
 def build_db(path: str, login: str, repos: list[dict]) -> None:
     if os.path.exists(path):
         os.remove(path)
     db = sqlite3.connect(path)
-    db.execute("PRAGMA page_size = 1024")
+    db.execute("PRAGMA page_size = 4096")
     db.execute("PRAGMA journal_mode = DELETE")
     db.executescript(SCHEMA)
 
     colors: dict[str, str | None] = {}
-    for r in repos:
+    repos = sorted(repos, key=lambda r: r["starred_at"], reverse=True)
+    for rank, r in enumerate(repos, 1):
         langs = r.get("languages", [])
         db.execute(
-            "INSERT INTO repos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO repos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
-                r["id"], r["full_name"], r["owner"], r["name"], r["url"], r["description"], r["homepage"],
+                rank, r["id"], r["full_name"], r["owner"], r["name"], r["url"], r["description"], r["homepage"],
                 r["language"], ",".join(name for name, _, _ in langs), " ".join(r["topics"]), r["license"],
                 r["stars"], r["forks"], r["archived"], r["fork"], r["created_at"], r["pushed_at"], r["starred_at"],
+                len(r["readme"][1].encode()) if r.get("readme") else 0,
             ),
         )
         for name, size, color in langs:
             colors[name] = color
-            db.execute("INSERT INTO repo_languages VALUES (?,?,?)", (name, r["id"], size))
-        db.executemany("INSERT INTO repo_topics VALUES (?,?)", [(t, r["id"]) for t in set(r["topics"])])
+            db.execute("INSERT INTO repo_languages VALUES (?,?,?)", (name, rank, size))
+        db.executemany("INSERT INTO repo_topics VALUES (?,?)", [(t, rank) for t in set(r["topics"])])
         if r.get("readme"):
-            db.execute("INSERT INTO readmes VALUES (?,?,?)", (r["id"], *r["readme"]))
+            db.execute("INSERT INTO readmes VALUES (?,?,?)", (rank, *r["readme"]))
 
     db.executemany("INSERT INTO languages VALUES (?,?)", colors.items())
+    db.executescript(
+        """
+        INSERT INTO facets SELECT 'language', language, COUNT(*) FROM repos
+          WHERE language IS NOT NULL GROUP BY language;
+        INSERT INTO facets SELECT 'any_language', language, COUNT(*) FROM repo_languages GROUP BY language;
+        INSERT INTO facets SELECT 'topic', topic, COUNT(*) FROM repo_topics GROUP BY topic;
+        """
+    )
     db.executemany(
         "INSERT INTO meta VALUES (?,?)",
         [

@@ -31,6 +31,11 @@ stdenvNoCC.mkDerivation {
     cp $TMPDIR/package/lib/marked.umd.js $out/vendor/
     unpack ${npm "dompurify"}
     cp $TMPDIR/package/dist/purify.min.js $out/vendor/
+    # Pages caches assets for 10 minutes: version them so a deploy never mixes old and new files.
+    for f in app.js style.css; do
+      v=$(sha256sum $out/$f | cut -c1-10)
+      substituteInPlace $out/index.html --replace-fail "\"$f\"" "\"$f?v=$v\""
+    done
     runHook postInstall
   '';
 }
