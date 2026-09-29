@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       full:
-        description: Refetch every README instead of reusing the previous database
+        description: Refetch every README and language (embeddings are still reused when their text is unchanged)
         type: boolean
         default: false
 
@@ -35,7 +35,6 @@ jobs:
           persist-credentials: false
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
       - name: Download previous database
-        if: ${{ !inputs.full }}
         run: |
           tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName // empty')
           if [ -n "$tag" ]; then
@@ -46,8 +45,13 @@ jobs:
       - name: Fetch stars
         run: |
           previous=()
-          if [ -f previous.sqlite ]; then previous=(--previous previous.sqlite); fi
+          if [ -f previous.sqlite ] && [ "${{ inputs.full }}" != "true" ]; then previous=(--previous previous.sqlite); fi
           nix run .#fetch -- stars.sqlite --user "$GITHUB_REPOSITORY_OWNER" --release-notes notes.md "${previous[@]}"
+      - name: Find similar projects
+        run: |
+          previous=()
+          if [ -f previous.sqlite ]; then previous=(--previous previous.sqlite); fi
+          nix run .#embed -- stars.sqlite --time-budget 600 "${previous[@]}"
       - name: Publish database release
         run: |
           tail -n +2 notes.md > body.md

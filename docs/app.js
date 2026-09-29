@@ -273,7 +273,9 @@ async function openDetail(r) {
     .join(" · ");
   const box = $("readme");
   box.replaceChildren(el("p", { className: "muted", textContent: "Chargement du README…" }));
-  $("detail").showModal();
+  if (!$("detail").open) $("detail").showModal();
+  $("detail").scrollTop = 0;
+  loadSimilar(r.id);
   try {
     const [m] = await query("SELECT path, content FROM readmes WHERE repo_id = ?", [r.id]);
     if (!m) return box.replaceChildren(el("p", { className: "muted", textContent: "Pas de README." }));
@@ -293,6 +295,34 @@ async function openDetail(r) {
   } finally {
     readmeBase = null;
   }
+}
+
+async function loadSimilar(id) {
+  $("similar").hidden = true;
+  let rows;
+  try {
+    rows = await query("SELECT * FROM similar WHERE repo_id = ? ORDER BY rank", [id]);
+  } catch {
+    return; // database built before similar projects existed
+  }
+  if (!rows.length) return;
+  $("similarList").replaceChildren(
+    ...rows.map((s) => {
+      const b = el(
+        "button",
+        { type: "button", title: s.description || "" },
+        el("strong", { textContent: s.full_name }),
+        el("span", { className: "muted", textContent: ` ★ ${fmtNum(s.stars)}${s.language ? ` · ${s.language}` : ""}` }),
+        s.description && el("span", { className: "desc", textContent: s.description }),
+      );
+      b.onclick = async () => {
+        const [repo] = await query("SELECT * FROM repos WHERE id = ?", [s.similar_id]);
+        if (repo) openDetail(repo);
+      };
+      return el("li", {}, b);
+    }),
+  );
+  $("similar").hidden = false;
 }
 
 async function loadLanguages() {

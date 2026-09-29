@@ -28,6 +28,17 @@
           text = ''exec python3 ${./fetch_stars.py} "$@"'';
         };
 
+        embed-stars = pkgs.writeShellApplication {
+          name = "embed-stars";
+          runtimeInputs = [
+            (pkgs.python3.withPackages (ps: [
+              ps.fastembed
+              ps.sqlite-vec
+            ]))
+          ];
+          text = ''exec python3 ${./embed_stars.py} "$@"'';
+        };
+
         # assemble-site DB OUTDIR: static app + content-addressed copy of DB.
         assemble-site = pkgs.writeShellApplication {
           name = "assemble-site";
@@ -77,6 +88,7 @@
         in
         {
           fetch = app p.fetch-stars;
+          embed = app p.embed-stars;
           assemble = app p.assemble-site;
           serve = app p.serve-stars;
           default = app p.serve-stars;
