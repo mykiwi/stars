@@ -56,12 +56,7 @@ jobs:
           gh release list --limit 200 --json tagName --jq '.[].tagName' | grep '^db-' |
             tail -n +$((KEEP_RELEASES + 1)) | xargs -r -n 1 gh release delete --yes --cleanup-tag
       - name: Assemble site
-        run: |
-          nix run .#assemble -- stars.sqlite _site
-          # TEMPORARY: probe which extensions GitHub Pages serves without on-the-fly compression.
-          for ext in png gif jpg webp zip gz br woff2 mp4 pdf bin db sqlite3; do
-            head -c 65536 stars.sqlite > "_site/probe.$ext"
-          done
+        run: nix run .#assemble -- stars.sqlite _site
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

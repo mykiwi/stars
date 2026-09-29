@@ -37,8 +37,11 @@
             mkdir -p "$out"
             cp -r --no-preserve=mode ${site}/. "$out/"
             hash=$(sha256sum "$db" | cut -c1-16)
-            cp "$db" "$out/stars-$hash.sqlite"
-            printf '{"url":"stars-%s.sqlite","size":%s}\n' "$hash" "$(stat -c %s "$db")" > "$out/db.json"
+            # Not gzip: the .gz extension (application/gzip) stops GitHub Pages from
+            # compressing the file on the fly, which would break HTTP range requests.
+            name="stars-$hash.sqlite.gz"
+            cp "$db" "$out/$name"
+            printf '{"url":"%s","size":%s}\n' "$name" "$(stat -c %s "$db")" > "$out/db.json"
             touch "$out/.nojekyll"
           '';
         };
