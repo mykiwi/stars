@@ -263,6 +263,24 @@ def readme_from_rest(full_name: str) -> tuple[str, str] | None:
     return None
 
 
+def load_previous(path: str) -> dict[int, dict]:
+    """Languages and README per repo id from a database written by a previous run."""
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    previous = {
+        rid: {"pushed_at": pushed_at, "languages": [], "readme": None}
+        for rid, pushed_at in db.execute("SELECT id, pushed_at FROM repos")
+    }
+    for rid, name, size, color in db.execute(
+        "SELECT rl.repo_id, rl.language, rl.bytes, l.color FROM repo_languages rl"
+        " LEFT JOIN languages l ON l.name = rl.language ORDER BY rl.repo_id, rl.bytes DESC"
+    ):
+        previous[rid]["languages"].append((name, size, color))
+    for rid, path_, content in db.execute("SELECT repo_id, path, content FROM readmes"):
+        previous[rid]["readme"] = (path_, content)
+    db.close()
+    return previous
+
+
 def build_db(path: str, login: str, repos: list[dict]) -> None:
     if os.path.exists(path):
         os.remove(path)
@@ -314,17 +332,11 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=10, help="repos per GraphQL details query")
     parser.add_argument("--jobs", type=int, default=6, help="parallel requests")
     parser.add_argument("--max-pages", type=int, help="only fetch the N most recent pages of 100 stars (for testing)")
-    parser.add_argument("--dump", help="also write the fetched data as JSON to this file")
-    parser.add_argument("--from-dump", help="build the database from a --dump file instead of fetching")
+    parser.add_argument(
+        "--previous",
+        help="previous database: reuse languages and README of repos not pushed to since",
+    )
     args = parser.parse_args()
-
-    if args.from_dump:
-        with open(args.from_dump) as f:
-            dump = json.load(f)
-        build_db(args.output + ".tmp", dump["login"], dump["repos"])
-        os.replace(args.output + ".tmp", args.output)
-        log(f"wrote {args.output} from {args.from_dump}")
-        return
 
     login = args.user
     if not login:
@@ -335,11 +347,22 @@ def main() -> None:
 
     log(f"listing stars of {login}")
     repos = fetch_stars(login, args.jobs, args.max_pages)
-    by_node_id = {r["node_id"]: r for r in repos}
+
+    previous = load_previous(args.previous) if args.previous else {}
+    stale = []
+    for repo in repos:
+        prev = previous.get(repo["id"])
+        if prev and prev["pushed_at"] == repo["pushed_at"]:
+            repo["languages"], repo["readme"] = prev["languages"], prev["readme"]
+        else:
+            stale.append(repo)
+    if previous:
+        log(f"reusing details of {len(repos) - len(stale)} unchanged repos from {args.previous}")
+    by_node_id = {r["node_id"]: r for r in stale}
 
     ids = list(by_node_id)
     batches = [ids[i : i + args.batch_size] for i in range(0, len(ids), args.batch_size)]
-    log(f"fetching languages and READMEs of {len(repos)} repos in {len(batches)} batches")
+    log(f"fetching languages and READMEs of {len(stale)} repos in {len(batches)} batches")
     with ThreadPoolExecutor(args.jobs) as pool:
         for done, nodes in enumerate(pool.map(fetch_details, batches), 1):
             for node in nodes:
@@ -352,15 +375,12 @@ def main() -> None:
             if done % 50 == 0 or done == len(batches):
                 log(f"  {done}/{len(batches)} batches")
 
-    missing = [r for r in repos if not r.get("readme") and r["size"] > 0]
-    log(f"{len(repos) - len(missing)} READMEs found, {len(missing)} left to look up via REST")
+    missing = [r for r in stale if not r.get("readme") and r["size"] > 0]
+    log(f"{len(stale) - len(missing)} READMEs found, {len(missing)} left to look up via REST")
     with ThreadPoolExecutor(args.jobs) as pool:
         for repo, found in zip(missing, pool.map(lambda r: readme_from_rest(r["full_name"]), missing)):
             repo["readme"] = found
 
-    if args.dump:
-        with open(args.dump, "w") as f:
-            json.dump({"login": login, "repos": repos}, f)
     tmp = args.output + ".tmp"
     build_db(tmp, login, repos)
     os.replace(tmp, args.output)

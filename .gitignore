@@ -8,4 +8,3 @@ result-*
 .env
 .env.*
 __pycache__/
-stars.json
