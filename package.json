@@ -1,0 +1,10 @@
+{
+  "name": "stars",
+  "private": true,
+  "description": "Front-end libraries vendored into the static site by nix/site.nix (no bundler).",
+  "dependencies": {
+    "dompurify": "3.4.16",
+    "marked": "18.0.14",
+    "sql.js-httpvfs": "0.8.12"
+  }
+}

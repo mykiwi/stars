@@ -1,0 +1,11 @@
+*.sqlite
+*.sqlite.tmp
+*.sqlite-journal
+/_site/
+result
+result-*
+.direnv/
+.env
+.env.*
+__pycache__/
+stars.json
