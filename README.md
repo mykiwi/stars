@@ -30,7 +30,7 @@ nix develop                                # shell with gh, python, sqlite, cadd
 Query the database directly:
 
 ```sh
-sqlite3 stars.sqlite "SELECT full_name, stars FROM repos JOIN search ON search.rowid = repos.id
+sqlite3 stars.sqlite "SELECT repos.full_name, stars FROM repos JOIN search ON search.rowid = repos.id
                       WHERE search MATCH 'sqlite wasm' ORDER BY rank LIMIT 10"
 ```
 
