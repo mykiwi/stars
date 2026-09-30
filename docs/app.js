@@ -8,9 +8,27 @@ const SORTS = {
   starred: "r.starred_at DESC",
   stars: "r.stars DESC",
   pushed: "r.pushed_at DESC",
+  oldest: "r.pushed_at ASC",
   name: "r.full_name COLLATE NOCASE",
 };
-const DEFAULTS = { q: "", lang: "", anyLang: false, topic: "", sort: "relevance", hideArchived: false, hideForks: false };
+const DEFAULTS = {
+  view: "list",
+  q: "",
+  lang: "",
+  anyLang: false,
+  theme: "",
+  topic: "",
+  sort: "relevance",
+  activity: "",
+  hideForks: false,
+};
+const ACTIVITY = {
+  active: "r.pushed_at >= date('now', '-1 year')",
+  stale: "r.pushed_at < date('now', '-2 years')",
+  archived: "r.archived",
+  live: "NOT r.archived",
+};
+const VIEWS = ["list", "themes", "duplicates"];
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
@@ -39,12 +57,15 @@ function readState() {
     state[k] = typeof v === "boolean" ? p.get(k) === "1" : p.get(k);
   }
   if (!SORTS[state.sort]) state.sort = DEFAULTS.sort;
+  if (!VIEWS.includes(state.view)) state.view = DEFAULTS.view;
+  if (state.activity && !ACTIVITY[state.activity]) state.activity = "";
   $("q").value = state.q;
   $("lang").value = state.lang;
   $("anyLang").checked = state.anyLang;
   $("topic").value = state.topic;
   $("sort").value = state.sort;
-  $("hideArchived").checked = state.hideArchived;
+  $("theme").value = state.theme;
+  $("activity").value = state.activity;
   $("hideForks").checked = state.hideForks;
 }
 
@@ -81,7 +102,11 @@ function buildWhere() {
     where.push("r.id IN (SELECT repo_id FROM repo_topics WHERE topic = ?)");
     params.push(state.topic.trim().toLowerCase());
   }
-  if (state.hideArchived) where.push("NOT r.archived");
+  if (state.theme) {
+    where.push("r.id IN (SELECT repo_id FROM repo_clusters WHERE cluster_id = ?)");
+    params.push(Number(state.theme));
+  }
+  if (state.activity) where.push(ACTIVITY[state.activity]);
   if (state.hideForks) where.push("NOT r.fork");
   return { fts, from: `FROM repos r ${joins.join(" ")}`, where: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
 }
@@ -276,6 +301,7 @@ async function openDetail(r) {
   if (!$("detail").open) $("detail").showModal();
   $("detail").scrollTop = 0;
   loadSimilar(r.id);
+  loadRepoTheme(r.id);
   try {
     const [m] = await query("SELECT path, content FROM readmes WHERE repo_id = ?", [r.id]);
     if (!m) return box.replaceChildren(el("p", { className: "muted", textContent: "Pas de README." }));
@@ -295,6 +321,27 @@ async function openDetail(r) {
   } finally {
     readmeBase = null;
   }
+}
+
+async function loadRepoTheme(id) {
+  $("detailTheme").hidden = true;
+  let rows = [];
+  try {
+    rows = await query(
+      "SELECT c.id, c.label FROM repo_clusters rc JOIN clusters c ON c.id = rc.cluster_id WHERE rc.repo_id = ?",
+      [id],
+    );
+  } catch {
+    return;
+  }
+  if (!rows.length) return;
+  const b = $("detailTheme").querySelector("button");
+  b.textContent = rows[0].label;
+  b.onclick = () => {
+    $("detail").close();
+    setFilter({ view: "list", theme: String(rows[0].id) });
+  };
+  $("detailTheme").hidden = false;
 }
 
 async function loadSimilar(id) {
@@ -354,8 +401,93 @@ async function setFilter(patch) {
   writeState();
   readState();
   if (state.anyLang !== anyLang) await loadLanguages();
-  search(true);
+  refresh();
   scrollTo({ top: 0 });
+}
+
+function refresh() {
+  for (const b of document.querySelectorAll("#views button")) b.classList.toggle("active", b.dataset.view === state.view);
+  const list = state.view === "list";
+  for (const id of ["count", "results"]) $(id).hidden = !list;
+  $("themesView").hidden = state.view !== "themes";
+  $("duplicatesView").hidden = state.view !== "duplicates";
+  if (list) return search(true);
+  $("more").hidden = true;
+  generation++; // drop in-flight list results
+  (state.view === "themes" ? renderThemes() : renderDuplicates()).catch(showError);
+}
+
+async function loadThemes() {
+  let rows = [];
+  try {
+    rows = await query("SELECT id, label, size FROM clusters ORDER BY label");
+  } catch {
+    return; // database built before themes existed
+  }
+  $("theme").replaceChildren(
+    el("option", { value: "", textContent: "Tous" }),
+    ...rows.map((c) => el("option", { value: String(c.id), textContent: `${c.label} (${c.size})` })),
+  );
+  $("theme").value = state.theme;
+}
+
+async function renderThemes() {
+  const rows = await query("SELECT * FROM clusters ORDER BY size DESC");
+  $("themesList").replaceChildren(
+    ...rows.map((c) => {
+      const b = el(
+        "button",
+        { type: "button" },
+        el("strong", { textContent: c.label }),
+        el("span", { className: "muted", textContent: `${c.size} repos · ${c.languages.replaceAll(",", ", ")}` }),
+        el("span", { className: "examples", textContent: c.examples.replaceAll(",", ", ") }),
+      );
+      b.onclick = () => setFilter({ view: "list", theme: String(c.id) });
+      return el("li", {}, b);
+    }),
+  );
+}
+
+async function renderDuplicates() {
+  const rows = await query("SELECT * FROM duplicates ORDER BY pair, side");
+  const stale = new Date(Date.now() - 2 * 365 * 24 * 3600 * 1000).toISOString();
+  const side = (d) => {
+    const name = el("button", { type: "button", className: "linklike", textContent: d.full_name });
+    name.onclick = async () => {
+      const [repo] = await query("SELECT * FROM repos WHERE id = ?", [d.repo_id]);
+      if (repo) openDetail(repo);
+    };
+    return el(
+      "div",
+      { className: "side" },
+      name,
+      d.description && el("span", { className: "desc", textContent: d.description }),
+      el(
+        "span",
+        { className: "meta" },
+        el("span", { textContent: `★ ${fmtNum(d.stars)}` }),
+        el("span", { className: d.pushed_at < stale ? "stale" : "", textContent: `⟳ ${fmtDate(d.pushed_at)}` }),
+        d.archived ? el("span", { className: "badge", textContent: "archivé" }) : null,
+        d.fork ? el("span", { className: "badge", textContent: "fork" }) : null,
+      ),
+    );
+  };
+  const owner = (d) => d.full_name.split("/")[0].toLowerCase();
+  const items = [];
+  for (let i = 0; i < rows.length; i += 2) {
+    if (!$("sameOwner").checked && rows[i + 1] && owner(rows[i]) === owner(rows[i + 1])) continue;
+    items.push(
+      el(
+        "li",
+        {},
+        side(rows[i]),
+        el("span", { className: "score", title: "similarité cosinus", textContent: `≈ ${rows[i].score.toFixed(2)}` }),
+        rows[i + 1] && side(rows[i + 1]),
+      ),
+    );
+  }
+  $("duplicatesList").replaceChildren(...items);
+  if (!items.length) $("duplicatesList").append(el("li", { className: "muted", textContent: "Aucun doublon détecté." }));
 }
 
 function readStateFromDom() {
@@ -364,14 +496,16 @@ function readStateFromDom() {
   state.anyLang = $("anyLang").checked;
   state.topic = $("topic").value.trim();
   state.sort = $("sort").value;
-  state.hideArchived = $("hideArchived").checked;
+  state.theme = $("theme").value;
+  state.activity = $("activity").value;
   state.hideForks = $("hideForks").checked;
 }
 
 function onChange() {
   readStateFromDom();
+  state.view = "list";
   writeState();
-  search(true);
+  refresh();
 }
 
 function showError(e) {
@@ -404,7 +538,8 @@ async function main() {
   document.title = `Stars de @${meta.login}`;
 
   await loadLanguages();
-  search(true);
+  refresh();
+  loadThemes();
 
   let timer;
   $("q").addEventListener("input", () => {
@@ -418,7 +553,9 @@ async function main() {
   });
   $("topic").addEventListener("change", onChange);
   $("topic").addEventListener("focus", loadTopics);
-  for (const id of ["lang", "sort", "hideArchived", "hideForks"]) $(id).addEventListener("change", onChange);
+  for (const id of ["lang", "sort", "theme", "activity", "hideForks"]) $(id).addEventListener("change", onChange);
+  $("sameOwner").addEventListener("change", () => renderDuplicates().catch(showError));
+  for (const b of document.querySelectorAll("#views button")) b.onclick = () => setFilter({ view: b.dataset.view });
   $("reset").onclick = () => setFilter({ ...DEFAULTS });
   $("more").onclick = () => search(false);
   new IntersectionObserver((entries) => {

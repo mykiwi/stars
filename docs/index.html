@@ -16,6 +16,11 @@
     <div class="title">
       <h1>★ Stars</h1>
       <span id="stats" class="muted">Chargement de la base…</span>
+      <nav id="views">
+        <button type="button" data-view="list">Liste</button>
+        <button type="button" data-view="themes">Thèmes</button>
+        <button type="button" data-view="duplicates">Doublons</button>
+      </nav>
       <a id="download" hidden download="stars.sqlite">Télécharger la base SQLite</a>
     </div>
     <form id="filters" autocomplete="off" onsubmit="return false">
@@ -27,6 +32,9 @@
         <label title="Filtrer sur le langage principal ou sur tous les langages du repo">
           <input id="anyLang" type="checkbox"> tous langages
         </label>
+        <label>Thème
+          <select id="theme"><option value="">Tous</option></select>
+        </label>
         <label>Topic
           <input id="topic" list="topics" placeholder="tous">
           <datalist id="topics"></datalist>
@@ -37,10 +45,19 @@
             <option value="starred">Date de star</option>
             <option value="stars">Nombre de stars</option>
             <option value="pushed">Activité récente</option>
+            <option value="oldest">Activité la plus ancienne</option>
             <option value="name">Nom</option>
           </select>
         </label>
-        <label><input id="hideArchived" type="checkbox"> sans archivés</label>
+        <label>État
+          <select id="activity">
+            <option value="">Tous</option>
+            <option value="active">Actifs (push &lt; 1 an)</option>
+            <option value="stale">Inactifs (pas de push depuis 2 ans)</option>
+            <option value="archived">Archivés</option>
+            <option value="live">Non archivés</option>
+          </select>
+        </label>
         <label><input id="hideForks" type="checkbox"> sans forks</label>
         <button id="reset" type="button">Réinitialiser</button>
       </div>
@@ -48,6 +65,15 @@
   </header>
 
   <main>
+    <section id="themesView" hidden>
+      <p class="muted">Regroupements automatiques de tes stars par proximité sémantique (README, description, topics).</p>
+      <ol id="themesList"></ol>
+    </section>
+    <section id="duplicatesView" hidden>
+      <p class="muted">Paires quasi identiques : souvent un projet abandonné et son fork maintenu. Compare l'activité pour choisir lequel garder.
+        <label><input id="sameOwner" type="checkbox"> inclure les projets d'une même organisation</label></p>
+      <ol id="duplicatesList"></ol>
+    </section>
     <p id="count" class="muted"></p>
     <ol id="results"></ol>
     <button id="more" type="button" hidden>Plus de résultats</button>
@@ -60,6 +86,7 @@
         <div>
           <h2><a id="detailTitle" target="_blank" rel="noopener"></a></h2>
           <p id="detailMeta" class="muted"></p>
+          <p id="detailTheme" hidden>Thème : <button type="button" class="topic"></button></p>
         </div>
         <button id="closeDetail" type="button" aria-label="Fermer" autofocus>✕</button>
       </header>

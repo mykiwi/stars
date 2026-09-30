@@ -8,7 +8,10 @@ Browse, filter and full-text search my GitHub stars — https://mykiwi.github.io
 - `embed_stars.py` embeds each repository (name, description, topics, start of
   the README) with a local [fastembed](https://github.com/qdrant/fastembed) model
   and uses [sqlite-vec](https://github.com/asg017/sqlite-vec) to store its
-  nearest neighbours, shown as "similar projects" in the app. Embeddings are
+  nearest neighbours, shown as "similar projects" in the app. It also groups
+  repositories into themes (spherical k-means, labelled by their most distinctive
+  topics) and lists near-identical pairs, typically an abandoned project and its
+  maintained fork, to help clean up stars. Embeddings are
   reused while their text is unchanged; CI embeds at most 10 minutes' worth per
   run (most recent stars first), the rest is picked up by the next runs.
 - `docs/` is a static app (no bundler) that queries that database directly in the
@@ -54,6 +57,9 @@ sqlite3 stars.sqlite "SELECT repos.full_name, stars FROM repos JOIN search ON se
 | `facets`         | precomputed language/topic counts for the filters          |
 | `embeddings`     | float32 vectors (sqlite-vec format) and hash of their text |
 | `similar`        | 8 nearest neighbours per repository                        |
+| `clusters`       | themes: label, size, main languages, examples              |
+| `repo_clusters`  | theme of each repository                                   |
+| `duplicates`     | near-identical pairs (cosine similarity ≥ 0.90)            |
 | `meta`           | login, fetch date, count, embedding model                  |
 
 ## Dependencies
