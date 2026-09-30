@@ -50,6 +50,40 @@ def download(full_name: str) -> str:
         raise Blocked(str(e)) from e
 
 
+def best_mark(a: str | None, b: str | None) -> str | None:
+    """Prefer a successful backfill date over a failure, the latest of each."""
+    ok = [m for m in (a, b) if m and not m.startswith("failed:")]
+    if ok:
+        return max(ok)
+    return max((m for m in (a, b) if m), default=None)
+
+
+def merge_from(db: sqlite3.Connection, path: str, today_n: int) -> int:
+    """Union star_history of another database into db, matching repositories by GitHub id."""
+    src = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    theirs = {
+        gid: (json.loads(points), mark)
+        for gid, points, mark in src.execute(
+            "SELECT r.github_id, h.points, h.backfilled FROM star_history h JOIN repos r ON r.id = h.repo_id"
+        )
+    }
+    src.close()
+    merged = 0
+    for rid, gid, points, mark in db.execute(
+        "SELECT r.id, r.github_id, h.points, h.backfilled FROM repos r LEFT JOIN star_history h ON h.repo_id = r.id"
+    ).fetchall():
+        if gid not in theirs:
+            continue
+        their_points, their_mark = theirs[gid]
+        points = fetch_stars.downsample((json.loads(points) if points else []) + their_points, today_n)
+        db.execute(
+            "INSERT OR REPLACE INTO star_history VALUES (?,?,?)",
+            (rid, json.dumps(points, separators=(",", ":")), best_mark(mark, their_mark)),
+        )
+        merged += 1
+    return merged
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("database", help="database written by fetch_stars.py, updated in place")
@@ -57,6 +91,10 @@ def main() -> None:
     parser.add_argument("--limit", type=int, help="backfill at most N repositories (most recent stars first)")
     parser.add_argument("--delay", type=float, default=30.0, help="seconds between requests to star-history.com")
     parser.add_argument("--stop-when-blocked", action="store_true", help="stop instead of pausing when refused")
+    parser.add_argument(
+        "--merge-from",
+        help="only merge the star history of another database (e.g. a local backfill) into DATABASE",
+    )
     args = parser.parse_args()
 
     cache = Path(args.cache)
@@ -64,6 +102,16 @@ def main() -> None:
     today = date.today()
     today_n = (today - date(1970, 1, 1)).days
     db = sqlite3.connect(args.database)
+    if args.merge_from:
+        n = merge_from(db, args.merge_from, today_n)
+        db.commit()
+        db.execute("VACUUM")
+        done = db.execute(
+            "SELECT COUNT(*) FROM star_history WHERE backfilled IS NOT NULL AND backfilled NOT LIKE 'failed:%'"
+        ).fetchone()[0]
+        db.close()
+        log(f"merged star history of {n} repositories; {done} are backfilled")
+        return
     rows = db.execute(
         "SELECT r.id, r.github_id, r.full_name, r.stars, h.points, h.backfilled"
         " FROM repos r LEFT JOIN star_history h ON h.repo_id = r.id ORDER BY r.id"

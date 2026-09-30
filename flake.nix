@@ -53,6 +53,30 @@
           text = ''exec python3 ${scripts}/backfill_star_history.py "$@"'';
         };
 
+        # publish-backfill [LOCAL_DB]: merge a local backfill into the latest release DB and publish it.
+        publish-backfill = pkgs.writeShellApplication {
+          name = "publish-backfill";
+          runtimeInputs = [
+            backfill-history
+            pkgs.gh
+            pkgs.sqlite
+            pkgs.coreutils
+          ];
+          text = ''
+            local_db=''${1:-$HOME/.cache/stars-backfill/stars.sqlite}
+            tmp=$(mktemp -d)
+            trap 'rm -rf "$tmp"' EXIT
+            tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+            gh release download "$tag" --pattern stars.sqlite --output "$tmp/stars.sqlite"
+            sqlite3 "$local_db" ".backup '$tmp/local.sqlite'"
+            backfill-history "$tmp/stars.sqlite" --merge-from "$tmp/local.sqlite" 2>&1 | tee "$tmp/log"
+            count=$(sqlite3 "$tmp/stars.sqlite" "SELECT value FROM meta WHERE key = 'count'")
+            gh release create "db-$(date -u +%Y%m%d-%H%M%S)" "$tmp/stars.sqlite" --latest \
+              --title "$(date -u +%F) · $count stars (star history backfill)" \
+              --notes "Star history from the local star-history.com backfill merged into $tag: $(tail -n 1 "$tmp/log")."
+          '';
+        };
+
         # assemble-site DB OUTDIR: static app + content-addressed copy of DB.
         assemble-site = pkgs.writeShellApplication {
           name = "assemble-site";
@@ -104,6 +128,7 @@
           fetch = app p.fetch-stars;
           embed = app p.embed-stars;
           backfill-history = app p.backfill-history;
+          publish-backfill = app p.publish-backfill;
           assemble = app p.assemble-site;
           serve = app p.serve-stars;
           default = app p.serve-stars;

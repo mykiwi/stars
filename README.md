@@ -41,6 +41,7 @@ gh release download -p stars.sqlite -O old.sqlite       # latest release
 nix run .#fetch -- stars.sqlite --previous old.sqlite   # incremental: reuse unchanged READMEs
 nix run .#embed -- stars.sqlite --previous old.sqlite   # similar projects (reuses old embeddings)
 nix run .#backfill-history -- stars.sqlite   # past star counts (slow: ~30 s per repository)
+nix run .#publish-backfill                 # merge ~/.cache/stars-backfill/stars.sqlite into a new release
 nix run .#serve -- stars.sqlite            # browse on http://localhost:8000
 nix run .#assemble -- stars.sqlite _site   # static site as deployed on Pages
 nix develop                                # shell with gh, python, sqlite, caddy, node
