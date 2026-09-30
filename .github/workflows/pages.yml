@@ -45,8 +45,13 @@ jobs:
       - name: Fetch stars
         run: |
           previous=()
-          if [ -f previous.sqlite ] && [ "${{ inputs.full }}" != "true" ]; then previous=(--previous previous.sqlite); fi
+          if [ -f previous.sqlite ]; then previous=(--previous previous.sqlite); fi
+          if [ "${{ inputs.full }}" = "true" ]; then previous+=(--refetch-all); fi
           nix run .#fetch -- stars.sqlite --user "$GITHUB_REPOSITORY_OWNER" --release-notes notes.md "${previous[@]}"
+      - name: Backfill star history of new stars
+        run: >-
+          nix run .#backfill-history -- stars.sqlite
+          --limit 10 --delay 20 --stop-when-blocked --cache "$RUNNER_TEMP/star-history"
       - name: Find similar projects
         run: |
           previous=()

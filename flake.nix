@@ -16,6 +16,14 @@
     in
     {
       packages = forAllSystems (pkgs: rec {
+        scripts = pkgs.runCommand "stars-scripts" { } ''
+          mkdir -p $out
+          cp ${./fetch_stars.py} $out/fetch_stars.py
+          cp ${./embed_stars.py} $out/embed_stars.py
+          cp ${./star_history_svg.py} $out/star_history_svg.py
+          cp ${./backfill_star_history.py} $out/backfill_star_history.py
+        '';
+
         # Static web app, without the database.
         site = pkgs.callPackage ./nix/site.nix { };
 
@@ -25,7 +33,7 @@
             pkgs.gh
             pkgs.python3
           ];
-          text = ''exec python3 ${./fetch_stars.py} "$@"'';
+          text = ''exec python3 ${scripts}/fetch_stars.py "$@"'';
         };
 
         embed-stars = pkgs.writeShellApplication {
@@ -36,7 +44,13 @@
               ps.sqlite-vec
             ]))
           ];
-          text = ''exec python3 ${./embed_stars.py} "$@"'';
+          text = ''exec python3 ${scripts}/embed_stars.py "$@"'';
+        };
+
+        backfill-history = pkgs.writeShellApplication {
+          name = "backfill-history";
+          runtimeInputs = [ pkgs.python3 ];
+          text = ''exec python3 ${scripts}/backfill_star_history.py "$@"'';
         };
 
         # assemble-site DB OUTDIR: static app + content-addressed copy of DB.
@@ -89,6 +103,7 @@
         {
           fetch = app p.fetch-stars;
           embed = app p.embed-stars;
+          backfill-history = app p.backfill-history;
           assemble = app p.assemble-site;
           serve = app p.serve-stars;
           default = app p.serve-stars;

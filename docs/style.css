@@ -152,3 +152,16 @@ dialog header p { margin: .2rem 0 0; font-size: .85rem; overflow-wrap: anywhere;
 }
 #theme { max-width: 13rem; }
 #duplicatesView label { display: inline-flex; gap: .3rem; margin-left: .5rem; }
+.stars { display: inline-flex; align-items: center; gap: .4rem; }
+.spark { display: inline-block; width: 60px; height: 16px; }
+.spark:empty { display: none; }
+.spark svg, #historyChart svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.spark path, #historyChart path { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
+#history { padding: .75rem 1.25rem 0; }
+#history h3 { margin: 0 0 .5rem; font-size: .9rem; color: var(--muted); font-weight: 600; }
+#history h3 a { font-weight: 400; font-size: .8rem; margin-left: .5rem; }
+#historyChart { height: 90px; }
+#historyChart path { stroke-width: 2; }
+#history .axis { display: flex; justify-content: space-between; margin: .25rem 0 0; font-size: .75rem; }
+#historyChart.external { height: auto; }
+#historyChart.external img { display: block; width: 100%; max-width: 560px; margin: 0 auto; border-radius: 6px; }

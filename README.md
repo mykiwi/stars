@@ -14,6 +14,13 @@ Browse, filter and full-text search my GitHub stars — https://mykiwi.github.io
   maintained fork, to help clean up stars. Embeddings are
   reused while their text is unchanged; CI embeds at most 10 minutes' worth per
   run (most recent stars first), the rest is picked up by the next runs.
+- Each run records every repository's star count in `star_history`
+  (daily for 30 days, weekly for a year, monthly before). The past comes from
+  [star-history.com](https://star-history.com) charts, read back by
+  `backfill_star_history.py`, since GitHub no longer lists other repositories'
+  dated stargazers: done once locally, slowly (their service rate limits bulk
+  use), then CI only backfills a few new stars per run. The app shows a
+  sparkline next to each star count and a chart in the repository dialog.
 - `docs/` is a static app (no bundler) that queries that database directly in the
   browser with [sql.js-httpvfs](https://github.com/phiresky/sql.js-httpvfs): only
   the SQLite pages needed by a query are downloaded, through HTTP range requests.
@@ -33,6 +40,7 @@ nix run .#fetch -- stars.sqlite            # fetch stars of the gh user (--user 
 gh release download -p stars.sqlite -O old.sqlite       # latest release
 nix run .#fetch -- stars.sqlite --previous old.sqlite   # incremental: reuse unchanged READMEs
 nix run .#embed -- stars.sqlite --previous old.sqlite   # similar projects (reuses old embeddings)
+nix run .#backfill-history -- stars.sqlite   # past star counts (slow: ~30 s per repository)
 nix run .#serve -- stars.sqlite            # browse on http://localhost:8000
 nix run .#assemble -- stars.sqlite _site   # static site as deployed on Pages
 nix develop                                # shell with gh, python, sqlite, caddy, node
@@ -60,6 +68,7 @@ sqlite3 stars.sqlite "SELECT repos.full_name, stars FROM repos JOIN search ON se
 | `clusters`       | themes: label, size, main languages, examples              |
 | `repo_clusters`  | theme of each repository                                   |
 | `duplicates`     | near-identical pairs (cosine similarity ≥ 0.90)            |
+| `star_history`   | JSON `[[days since epoch, stars], …]` per repository       |
 | `meta`           | login, fetch date, count, embedding model                  |
 
 ## Dependencies

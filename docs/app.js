@@ -155,9 +155,85 @@ async function runSearch(reset) {
     // Snippets read whole READMEs over HTTP: only for the top results, skipping huge ones.
     const snippetIds = rows.filter((r) => r.readme_size && r.readme_size < 65536).slice(0, 10).map((r) => r.id);
     if (fts && reset && snippetIds.length) loadSnippets(gen, fts, snippetIds);
+    loadSparklines(gen, rows.map((r) => r.id));
   } catch (e) {
     showError(e);
   }
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const DAY_MS = 86400000;
+const fmtDay = (d) => new Date(d * DAY_MS).toISOString().slice(0, 10);
+
+function chart(points, width, height, pad) {
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const sx = (d) => pad + (x1 === x0 ? 0 : ((d - x0) / (x1 - x0)) * (width - 2 * pad));
+  const sy = (v) => height - pad - (y1 === y0 ? 0 : ((v - y0) / (y1 - y0)) * (height - 2 * pad));
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", points.map((p, i) => `${i ? "L" : "M"}${sx(p[0]).toFixed(1)} ${sy(p[1]).toFixed(1)}`).join(""));
+  path.setAttribute("vector-effect", "non-scaling-stroke");
+  svg.append(path);
+  return svg;
+}
+
+const historyTitle = (points) => {
+  const [first, last] = [points[0], points[points.length - 1]];
+  return `${first[1].toLocaleString("fr")} stars le ${fmtDay(first[0])} → ${last[1].toLocaleString("fr")} le ${fmtDay(last[0])}`;
+};
+
+async function loadSparklines(gen, ids) {
+  if (!ids.length) return;
+  let rows;
+  try {
+    rows = await query(`SELECT repo_id, points FROM star_history WHERE repo_id IN (${ids.map(() => "?").join(",")})`, ids);
+  } catch {
+    return; // database built before star history existed
+  }
+  if (gen !== generation) return;
+  for (const { repo_id, points } of rows) {
+    const pts = JSON.parse(points);
+    if (pts.length < 3) continue;
+    const slot = document.querySelector(`[data-id="${repo_id}"] .spark`);
+    if (!slot) continue;
+    slot.replaceChildren(chart(pts, 60, 16, 1));
+    slot.title = historyTitle(pts);
+  }
+}
+
+async function loadHistory(r) {
+  $("history").hidden = true;
+  let rows = [];
+  try {
+    rows = await query("SELECT points, backfilled FROM star_history WHERE repo_id = ?", [r.id]);
+  } catch {
+    return;
+  }
+  const pts = rows.length ? JSON.parse(rows[0].points) : [];
+  const backfilled = rows.length && rows[0].backfilled && !rows[0].backfilled.startsWith("failed:");
+  $("historyLink").href = `https://www.star-history.com/#${r.full_name}&Date`;
+  if (backfilled && pts.length >= 3) {
+    $("historyChart").className = "";
+    $("historyChart").replaceChildren(chart(pts, 600, 90, 3));
+    $("historyStart").textContent = `${fmtDay(pts[0][0])} · ${pts[0][1].toLocaleString("fr")} ★`;
+    $("historyEnd").textContent = `${fmtDay(pts[pts.length - 1][0])} · ${pts[pts.length - 1][1].toLocaleString("fr")} ★`;
+  } else {
+    // Not backfilled yet: show star-history.com's own chart, loaded on demand.
+    const img = el("img", {
+      loading: "lazy",
+      alt: `Évolution des stars de ${r.full_name}`,
+      src: `https://api.star-history.com/svg?${new URLSearchParams({ repos: r.full_name, type: "Date" })}`,
+    });
+    $("historyChart").className = "external";
+    $("historyChart").replaceChildren(img);
+    $("historyStart").textContent = "";
+    $("historyEnd").textContent = "";
+  }
+  $("history").hidden = false;
 }
 
 async function loadSnippets(gen, fts, ids) {
@@ -240,7 +316,7 @@ function renderRepo(r) {
       "div",
       { className: "head" },
       el("h3", {}, title),
-      el("span", { className: "stars", title: `${r.stars} stars` }, `★ ${fmtNum(r.stars)}`),
+      el("span", { className: "stars", title: `${r.stars} stars` }, el("span", { className: "spark" }), `★ ${fmtNum(r.stars)}`),
     ),
     r.description && el("p", { className: "desc", textContent: r.description }),
     el("p", { className: "snippet" }),
@@ -302,6 +378,7 @@ async function openDetail(r) {
   $("detail").scrollTop = 0;
   loadSimilar(r.id);
   loadRepoTheme(r.id);
+  loadHistory(r);
   try {
     const [m] = await query("SELECT path, content FROM readmes WHERE repo_id = ?", [r.id]);
     if (!m) return box.replaceChildren(el("p", { className: "muted", textContent: "Pas de README." }));

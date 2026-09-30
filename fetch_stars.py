@@ -88,6 +88,13 @@ CREATE TABLE facets (
   count INTEGER NOT NULL,
   PRIMARY KEY (kind, count, name)
 ) WITHOUT ROWID;
+-- Star count over time: JSON [[days since 1970-01-01, stars], ...], downsampled (see downsample()).
+-- backfilled is the date the star-history.com backfill was attempted (NULL = never).
+CREATE TABLE star_history (
+  repo_id INTEGER PRIMARY KEY REFERENCES repos (id),
+  points TEXT NOT NULL,
+  backfilled TEXT
+);
 CREATE VIEW search_source AS
   SELECT r.id, r.full_name, r.description, r.topics, m.content AS readme
   FROM repos r LEFT JOIN readmes m ON m.repo_id = r.id;
@@ -273,6 +280,22 @@ def readme_from_rest(full_name: str) -> tuple[str, str] | None:
     return None
 
 
+def downsample(points: list[list[int]], today: int) -> list[list[int]]:
+    """Keep daily points for 30 days, one per week for a year, one per month before."""
+    kept: dict[tuple, list[int]] = {}
+    for day, stars in sorted(points):
+        age = today - day
+        if age <= 30:
+            key: tuple = ("d", day)
+        elif age <= 365:
+            key = ("w", day // 7)
+        else:
+            d = datetime.fromtimestamp(day * 86400, timezone.utc)
+            key = ("m", d.year, d.month)
+        kept[key] = [day, stars]  # last point of each bucket wins
+    return sorted(kept.values())
+
+
 def load_previous(path: str) -> dict[int, dict]:
     """Languages and README per repo id from a database written by a previous run."""
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
@@ -284,7 +307,7 @@ def load_previous(path: str) -> dict[int, dict]:
     ):
         by_row[row_id] = {
             "github_id": github_id, "full_name": full_name, "url": url, "pushed_at": pushed_at,
-            "languages": [], "readme": None,
+            "languages": [], "readme": None, "history": [], "backfilled": None,
         }
     for row_id, name, size, color in db.execute(
         "SELECT rl.repo_id, rl.language, rl.bytes, l.color FROM repo_languages rl"
@@ -293,6 +316,9 @@ def load_previous(path: str) -> dict[int, dict]:
         by_row[row_id]["languages"].append((name, size, color))
     for row_id, path_, content in db.execute("SELECT repo_id, path, content FROM readmes"):
         by_row[row_id]["readme"] = (path_, content)
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name = 'star_history'").fetchone():
+        for row_id, points, backfilled in db.execute("SELECT repo_id, points, backfilled FROM star_history"):
+            by_row[row_id]["history"], by_row[row_id]["backfilled"] = json.loads(points), backfilled
     db.close()
     return {p["github_id"]: p for p in by_row.values()}
 
@@ -324,6 +350,11 @@ def build_db(path: str, login: str, repos: list[dict]) -> None:
         db.executemany("INSERT INTO repo_topics VALUES (?,?)", [(t, rank) for t in set(r["topics"])])
         if r.get("readme"):
             db.execute("INSERT INTO readmes VALUES (?,?,?)", (rank, *r["readme"]))
+        if r.get("history"):
+            db.execute(
+                "INSERT INTO star_history VALUES (?,?,?)",
+                (rank, json.dumps(r["history"], separators=(",", ":")), r.get("backfilled")),
+            )
 
     db.executemany("INSERT INTO languages VALUES (?,?)", colors.items())
     db.executescript(
@@ -362,6 +393,9 @@ def main() -> None:
         "--previous",
         help="previous database: reuse languages and README of repos not pushed to since",
     )
+    parser.add_argument(
+        "--refetch-all", action="store_true", help="refetch every README/languages even with --previous"
+    )
     parser.add_argument("--release-notes", help="write a markdown changelog vs --previous to this file")
     args = parser.parse_args()
 
@@ -376,10 +410,13 @@ def main() -> None:
     repos = fetch_stars(login, args.jobs, args.max_pages)
 
     previous = load_previous(args.previous) if args.previous else {}
+    today = int(time.time() // 86400)
     stale = []
     for repo in repos:
         prev = previous.get(repo["id"])
-        if prev and prev["pushed_at"] == repo["pushed_at"]:
+        repo["history"] = downsample((prev["history"] if prev else []) + [[today, repo["stars"]]], today)
+        repo["backfilled"] = prev["backfilled"] if prev else None
+        if prev and prev["pushed_at"] == repo["pushed_at"] and not args.refetch_all:
             repo["languages"], repo["readme"] = prev["languages"], prev["readme"]
         else:
             stale.append(repo)
