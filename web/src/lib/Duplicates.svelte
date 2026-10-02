@@ -3,7 +3,7 @@
 	import * as Card from '#lib/components/ui/card/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
-	import { query } from './db.ts';
+	import { query } from './db.svelte.ts';
 	import { fmtNum } from './format.ts';
 	import RepoMeta from './RepoMeta.svelte';
 	import type { Duplicate } from './types.ts';

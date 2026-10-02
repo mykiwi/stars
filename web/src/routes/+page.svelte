@@ -8,7 +8,7 @@
 	import { Label } from '#lib/components/ui/label/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
-	import { openDb, query, stats, type DbInfo } from '#lib/db.ts';
+	import { activity, openDb, query, stats, type DbInfo } from '#lib/db.svelte.ts';
 	import Duplicates from '#lib/Duplicates.svelte';
 	import {
 		buildWhere,
@@ -19,7 +19,8 @@
 		type Filters
 	} from '#lib/filters.ts';
 	import FilterSelect from '#lib/FilterSelect.svelte';
-	import { fmtDate, fmtInt, HL_END, HL_START } from '#lib/format.ts';
+	import { fmtDate, fmtInt, fmtSize, HL_END, HL_START } from '#lib/format.ts';
+	import LoadingBar from '#lib/LoadingBar.svelte';
 	import RepoCard from '#lib/RepoCard.svelte';
 	import RepoDialog from '#lib/RepoDialog.svelte';
 	import Themes from '#lib/Themes.svelte';
@@ -229,6 +230,8 @@
 	<title>{meta.login ? `Stars de @${meta.login}` : 'Stars'}</title>
 </svelte:head>
 
+<LoadingBar active={activity.pending > 0} />
+
 <header class="bg-card sticky top-0 z-10 border-b px-4 py-3 max-md:static">
 	<div class="mx-auto grid max-w-[1100px] gap-2">
 		<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -248,9 +251,20 @@
 				</Tabs.List>
 			</Tabs.Root>
 			{#if dbInfo}
-				<Button variant="link" size="sm" class="ml-auto px-0" href={dbInfo.url} download="stars.sqlite">
-					Télécharger la base SQLite ({(dbInfo.size / 1e6).toFixed(0)} Mo)
-				</Button>
+				<span class="ml-auto flex items-center gap-3">
+					{#if activity.fetched}
+						<span
+							id="fetched"
+							class="text-muted-foreground text-xs"
+							title="Seules les pages SQLite utiles aux requêtes sont téléchargées ({fmtInt(activity.requests)} requêtes HTTP)"
+						>
+							{fmtSize(activity.fetched)} lus sur {fmtSize(activity.total)}
+						</span>
+					{/if}
+					<Button variant="link" size="sm" class="px-0" href={dbInfo.url} download="stars.sqlite">
+						Télécharger la base SQLite
+					</Button>
+				</span>
 			{/if}
 		</div>
 		<form autocomplete="off" class="grid gap-2" onsubmit={(ev) => ev.preventDefault()}>

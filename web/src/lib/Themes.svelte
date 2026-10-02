@@ -1,6 +1,6 @@
 <script lang="ts">
 	import * as Card from '#lib/components/ui/card/index.js';
-	import { query } from './db.ts';
+	import { query } from './db.svelte.ts';
 	import type { Cluster } from './types.ts';
 
 	let { onpick, onerror }: { onpick: (themeId: string) => void; onerror: (e: unknown) => void } = $props();

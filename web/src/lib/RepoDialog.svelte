@@ -5,7 +5,7 @@
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import Chart from './Chart.svelte';
-	import { query } from './db.ts';
+	import { query } from './db.svelte.ts';
 	import { fmtDate, fmtDay, fmtInt, fmtNum } from './format.ts';
 	import { isMarkdown, renderReadme } from './markdown.ts';
 	import type { Point, Repo, Similar } from './types.ts';

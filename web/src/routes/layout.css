@@ -77,6 +77,15 @@
 }
 
 @theme inline {
+	--animate-indeterminate: indeterminate 1.2s ease-in-out infinite;
+	@keyframes indeterminate {
+		from {
+			translate: -100%;
+		}
+		to {
+			translate: 250%;
+		}
+	}
 	--font-sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
