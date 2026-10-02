@@ -2,6 +2,12 @@
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
+	import { Input } from '#lib/components/ui/input/index.js';
+	import { Label } from '#lib/components/ui/label/index.js';
+	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
+	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import { openDb, query, stats, type DbInfo } from '#lib/db.ts';
 	import Duplicates from '#lib/Duplicates.svelte';
 	import {
@@ -12,6 +18,7 @@
 		toQueryString,
 		type Filters
 	} from '#lib/filters.ts';
+	import FilterSelect from '#lib/FilterSelect.svelte';
 	import { fmtDate, fmtInt, HL_END, HL_START } from '#lib/format.ts';
 	import RepoCard from '#lib/RepoCard.svelte';
 	import RepoDialog from '#lib/RepoDialog.svelte';
@@ -45,6 +52,24 @@
 	let loadingMore = false;
 
 	const repoCount = $derived(Number(meta.count));
+	const all = { value: '', label: 'Tous' };
+	const languageOptions = $derived([all, ...languages.map((l) => ({ value: l.name, label: `${l.name} (${l.n})` }))]);
+	const themeOptions = $derived([all, ...themes.map((c) => ({ value: String(c.id), label: `${c.label} (${c.size})` }))]);
+	const sortOptions = [
+		{ value: 'relevance', label: 'Pertinence' },
+		{ value: 'starred', label: 'Date de star' },
+		{ value: 'stars', label: 'Nombre de stars' },
+		{ value: 'pushed', label: 'Activité récente' },
+		{ value: 'oldest', label: 'Activité la plus ancienne' },
+		{ value: 'name', label: 'Nom' }
+	];
+	const activityOptions = [
+		all,
+		{ value: 'active', label: 'Actifs (push < 1 an)' },
+		{ value: 'stale', label: 'Inactifs (pas de push depuis 2 ans)' },
+		{ value: 'archived', label: 'Archivés' },
+		{ value: 'live', label: 'Non archivés' }
+	];
 	const hasMore = $derived(filters.view === 'list' && total !== null && rows.length < total);
 
 	function showError(e: unknown) {
@@ -204,131 +229,122 @@
 	<title>{meta.login ? `Stars de @${meta.login}` : 'Stars'}</title>
 </svelte:head>
 
-<header id="top">
-	<div class="title">
-		<h1>★ Stars</h1>
-		<span class="muted">
-			{#if ready}
-				{fmtInt(repoCount)} stars de @{meta.login} · màj {fmtDate(meta.fetched_at)}
-			{:else}
-				Chargement de la base…
+<header class="bg-card sticky top-0 z-10 border-b px-4 py-3 max-md:static">
+	<div class="mx-auto grid max-w-[1100px] gap-2">
+		<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+			<h1 class="text-xl font-semibold">★ Stars</h1>
+			<span class="text-muted-foreground text-sm" id="stats">
+				{#if ready}
+					{fmtInt(repoCount)} stars de @{meta.login} · màj {fmtDate(meta.fetched_at)}
+				{:else if !error}
+					Chargement de la base…
+				{/if}
+			</span>
+			<Tabs.Root value={filters.view} onValueChange={(view) => setFilter({ view: view as Filters['view'] })}>
+				<Tabs.List>
+					<Tabs.Trigger value="list">Liste</Tabs.Trigger>
+					<Tabs.Trigger value="themes">Thèmes</Tabs.Trigger>
+					<Tabs.Trigger value="duplicates">Doublons</Tabs.Trigger>
+				</Tabs.List>
+			</Tabs.Root>
+			{#if dbInfo}
+				<Button variant="link" size="sm" class="ml-auto px-0" href={dbInfo.url} download="stars.sqlite">
+					Télécharger la base SQLite ({(dbInfo.size / 1e6).toFixed(0)} Mo)
+				</Button>
 			{/if}
-		</span>
-		<nav id="views">
-			{#each [['list', 'Liste'], ['themes', 'Thèmes'], ['duplicates', 'Doublons']] as const as [view, label]}
-				<button type="button" class={{ active: filters.view === view }} onclick={() => setFilter({ view })}>
-					{label}
-				</button>
-			{/each}
-		</nav>
-		{#if dbInfo}
-			<a id="download" href={dbInfo.url} download="stars.sqlite">
-				Télécharger la base SQLite ({(dbInfo.size / 1e6).toFixed(0)} Mo)
-			</a>
-		{/if}
-	</div>
-	<form autocomplete="off" onsubmit={(ev) => ev.preventDefault()}>
-		<!-- svelte-ignore a11y_autofocus -->
-		<input
-			id="q"
-			type="search"
-			placeholder="Rechercher (nom, description, topics, README)…"
-			autofocus
-			bind:value={q}
-			oninput={onSearchInput}
-		/>
-		<div class="row">
-			<label>
-				Langage
-				<select id="lang" onchange={(ev) => change({ lang: ev.currentTarget.value })}>
-					<option value="" selected={!filters.lang}>Tous</option>
-					{#each languages as l (l.name)}
-						<option value={l.name} selected={l.name === filters.lang}>{l.name} ({l.n})</option>
-					{/each}
-					{#if filters.lang && !languages.some((l) => l.name === filters.lang)}
-						<option value={filters.lang} selected>{filters.lang}</option>
-					{/if}
-				</select>
-			</label>
-			<label title="Filtrer sur le langage principal ou sur tous les langages du repo">
-				<input
-					type="checkbox"
-					checked={filters.anyLang}
-					onchange={(ev) => change({ anyLang: ev.currentTarget.checked })}
-				/> tous langages
-			</label>
-			<label>
-				Thème
-				<select id="theme" onchange={(ev) => change({ theme: ev.currentTarget.value })}>
-					<option value="" selected={!filters.theme}>Tous</option>
-					{#each themes as c (c.id)}
-						<option value={String(c.id)} selected={String(c.id) === filters.theme}>{c.label} ({c.size})</option>
-					{/each}
-				</select>
-			</label>
-			<label>
-				Topic
-				<input
-					id="topic"
-					list="topics"
-					placeholder="tous"
-					value={filters.topic}
-					onfocus={loadTopics}
-					onchange={(ev) => change({ topic: ev.currentTarget.value.trim() })}
-				/>
-				<datalist id="topics">
-					{#each topics ?? [] as t (t.name)}
-						<option value={t.name} label="{t.name} ({t.n})"></option>
-					{/each}
-				</datalist>
-			</label>
-			<label>
-				Tri
-				<select value={filters.sort} onchange={(ev) => change({ sort: ev.currentTarget.value as Filters['sort'] })}>
-					<option value="relevance">Pertinence</option>
-					<option value="starred">Date de star</option>
-					<option value="stars">Nombre de stars</option>
-					<option value="pushed">Activité récente</option>
-					<option value="oldest">Activité la plus ancienne</option>
-					<option value="name">Nom</option>
-				</select>
-			</label>
-			<label>
-				État
-				<select
-					value={filters.activity}
-					onchange={(ev) => change({ activity: ev.currentTarget.value as Filters['activity'] })}
-				>
-					<option value="">Tous</option>
-					<option value="active">Actifs (push &lt; 1 an)</option>
-					<option value="stale">Inactifs (pas de push depuis 2 ans)</option>
-					<option value="archived">Archivés</option>
-					<option value="live">Non archivés</option>
-				</select>
-			</label>
-			<label>
-				<input
-					type="checkbox"
-					checked={filters.hideForks}
-					onchange={(ev) => change({ hideForks: ev.currentTarget.checked })}
-				/> sans forks
-			</label>
-			<button type="button" onclick={() => setFilter({ ...DEFAULTS })}>Réinitialiser</button>
 		</div>
-	</form>
+		<form autocomplete="off" class="grid gap-2" onsubmit={(ev) => ev.preventDefault()}>
+			<!-- svelte-ignore a11y_autofocus -->
+			<Input
+				id="q"
+				type="search"
+				class="h-10 md:text-base"
+				placeholder="Rechercher (nom, description, topics, README)…"
+				autofocus
+				bind:value={q}
+				oninput={onSearchInput}
+			/>
+			<div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+				<div class="flex items-center gap-2">
+					<Label for="lang">Langage</Label>
+					<FilterSelect
+						id="lang"
+						class="max-w-40"
+						value={filters.lang}
+						options={languageOptions}
+						onchange={(lang) => change({ lang })}
+					/>
+				</div>
+				<div class="flex items-center gap-2" title="Filtrer sur le langage principal ou sur tous les langages du repo">
+					<Checkbox id="anyLang" checked={filters.anyLang} onCheckedChange={(anyLang) => change({ anyLang })} />
+					<Label for="anyLang" class="font-normal">tous langages</Label>
+				</div>
+				<div class="flex items-center gap-2">
+					<Label for="theme">Thème</Label>
+					<FilterSelect
+						id="theme"
+						class="max-w-52"
+						value={filters.theme}
+						options={themeOptions}
+						onchange={(theme) => change({ theme })}
+					/>
+				</div>
+				<div class="flex items-center gap-2">
+					<Label for="topic">Topic</Label>
+					<Input
+						id="topic"
+						class="h-7 w-32"
+						list="topics"
+						placeholder="tous"
+						value={filters.topic}
+						onfocus={loadTopics}
+						onchange={(ev) => change({ topic: ev.currentTarget.value.trim() })}
+					/>
+					<datalist id="topics">
+						{#each topics ?? [] as t (t.name)}
+							<option value={t.name} label="{t.name} ({t.n})"></option>
+						{/each}
+					</datalist>
+				</div>
+				<div class="flex items-center gap-2">
+					<Label for="sort">Tri</Label>
+					<FilterSelect
+						id="sort"
+						value={filters.sort}
+						options={sortOptions}
+						onchange={(sort) => change({ sort: sort as Filters['sort'] })}
+					/>
+				</div>
+				<div class="flex items-center gap-2">
+					<Label for="activity">État</Label>
+					<FilterSelect
+						id="activity"
+						value={filters.activity}
+						options={activityOptions}
+						onchange={(activity) => change({ activity: activity as Filters['activity'] })}
+					/>
+				</div>
+				<div class="flex items-center gap-2">
+					<Checkbox id="hideForks" checked={filters.hideForks} onCheckedChange={(hideForks) => change({ hideForks })} />
+					<Label for="hideForks" class="font-normal">sans forks</Label>
+				</div>
+				<Button variant="outline" size="sm" onclick={() => setFilter({ ...DEFAULTS })}>Réinitialiser</Button>
+			</div>
+		</form>
+	</div>
 </header>
 
-<main>
+<main class="mx-auto max-w-[1100px] px-4 py-4 min-[1140px]:px-0">
 	{#if ready}
 		{#if filters.view === 'themes'}
 			<Themes onpick={(theme) => setFilter({ view: 'list', theme })} onerror={showError} />
 		{:else if filters.view === 'duplicates'}
 			<Duplicates onopen={openById} onerror={showError} />
 		{:else}
-			<p class="muted">
+			<p class="text-muted-foreground mb-3 text-sm" id="count">
 				{#if total === null}Recherche…{:else}{fmtInt(total)} repo{total > 1 ? 's' : ''}{/if}
 			</p>
-			<ol id="results">
+			<ol id="results" class="grid gap-3">
 				{#each rows as repo (repo.id)}
 					<RepoCard
 						{repo}
@@ -342,13 +358,23 @@
 				{/each}
 			</ol>
 			{#if hasMore}
-				<button id="more" type="button" onclick={() => search(filters, false)} {@attach autoload}>
+				<Button
+					id="more"
+					variant="outline"
+					class="mx-auto my-4 flex"
+					onclick={() => search(filters, false)}
+					{@attach autoload}
+				>
 					Plus de résultats
-				</button>
+				</Button>
 			{/if}
 		{/if}
+	{:else if !error}
+		<div class="grid gap-3">
+			{#each { length: 6 } as _}<Skeleton class="h-24 rounded-xl" />{/each}
+		</div>
 	{/if}
-	{#if error}<p class="error">{error}</p>{/if}
+	{#if error}<p class="text-destructive mt-3">{error}</p>{/if}
 </main>
 
 <RepoDialog

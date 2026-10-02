@@ -1,3 +1,4 @@
+import tailwindcss from '@tailwindcss/vite';
 import { createReadStream, statSync } from 'node:fs';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
@@ -40,6 +41,7 @@ function starsDb(file = process.env.STARS_DB ?? '../stars.sqlite'): Plugin {
 
 export default defineConfig({
 	plugins: [
+		tailwindcss(),
 		sveltekit({
 			compilerOptions: {
 				// Force runes mode for the project, except for libraries. Can be removed in svelte 6.

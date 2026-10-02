@@ -17,6 +17,6 @@
 	});
 </script>
 
-<svg viewBox="0 0 {width} {height}" preserveAspectRatio="none">
-	<path {d} vector-effect="non-scaling-stroke" />
+<svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" class="block size-full overflow-visible">
+	<path {d} vector-effect="non-scaling-stroke" class="fill-none stroke-chart-2 stroke-[1.5] [stroke-linejoin:round]" />
 </svg>
