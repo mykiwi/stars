@@ -24,6 +24,9 @@ Browse, filter and full-text search my GitHub stars — https://mykiwi.github.io
 - `docs/` is a static app (no bundler) that queries that database directly in the
   browser with [sql.js-httpvfs](https://github.com/phiresky/sql.js-httpvfs): only
   the SQLite pages needed by a query are downloaded, through HTTP range requests.
+- `web/` is a proof of concept of the same app on SvelteKit 3. Its build is
+  committed in `docs/next/` (`npm run build:docs` in `web/`) and published at
+  [/next/](https://mykiwi.github.io/stars/next/) to compare both.
 - A GitHub Action rebuilds the database every day and deploys it to GitHub Pages.
   Each run publishes the database as the `stars.sqlite` asset of a dated
   [release](https://github.com/mykiwi/stars/releases) listing starred/unstarred
